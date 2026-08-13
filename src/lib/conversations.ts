@@ -99,13 +99,18 @@ export async function saveMessage(
   conversationId: string,
   message: UIMessage,
 ): Promise<void> {
+  const parts = persistableParts(message.parts);
+  // Nothing worth keeping: a turn that aborted before producing any complete
+  // part. Writing it would put an empty bubble in the reloaded thread.
+  if (parts.length === 0) return;
+
   await db
     .insert(messages)
     .values({
       id: message.id,
       conversationId,
       role: message.role,
-      parts: message.parts,
+      parts,
     })
     // The client may retry a request; the message id makes that idempotent.
     .onConflictDoNothing({ target: messages.id });
@@ -126,6 +131,27 @@ export async function deleteConversation(
     .where(
       and(eq(conversations.id, id), eq(conversations.userId, userId)),
     );
+}
+
+// A tool call is only replayable once it has a result. Anything else - a stream
+// aborted mid-tool, or a plan card still waiting on approval when the tab was
+// closed - makes convertToModelMessages throw when the thread is reloaded and
+// sent back to the model, so it never reaches the database.
+const TERMINAL_TOOL_STATES = new Set(["output-available", "output-error"]);
+
+function persistableParts(
+  parts: UIMessage["parts"],
+): UIMessage["parts"] {
+  return parts.filter((part) => {
+    const isToolPart =
+      part.type.startsWith("tool-") || part.type === "dynamic-tool";
+    if (!isToolPart) return true;
+    return (
+      "state" in part &&
+      typeof part.state === "string" &&
+      TERMINAL_TOOL_STATES.has(part.state)
+    );
+  });
 }
 
 const TITLE_MAX_LENGTH = 60;

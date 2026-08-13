@@ -153,6 +153,19 @@ Note the `npm run db:migrate` script uses `node --env-file=.env.local`, which is
 convenience. In CI or on a server, call `npx drizzle-kit migrate` directly with
 `DATABASE_URL` in the environment, as above.
 
+### One-off cleanup for databases created before the assistant-reply fix
+
+Any database written to before that fix contains a single stray `messages` row with an
+empty id — the one assistant reply that got through before the primary key started
+swallowing the rest. Delete it once per database (local and server); it is data, not
+schema, so there is no migration for it:
+
+```bash
+psql "$DATABASE_URL" -c "delete from messages where id = '';"
+```
+
+A fresh database created after the fix has no such row and can skip this.
+
 The Postgres client is pooled at `max: 10` connections
 ([src/db/index.ts](src/db/index.ts)). If you deploy to a serverless platform, put a
 pooler in front of the database (Neon's pooled endpoint, Supabase's pgBouncer port, or

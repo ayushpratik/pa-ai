@@ -1,5 +1,6 @@
 import {
   convertToModelMessages,
+  generateId,
   stepCountIs,
   streamText,
   type UIMessage,
@@ -102,6 +103,12 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     originalMessages: messages,
+    // Required, not optional. Without it the SDK leaves the response message's
+    // id as an empty string (originalMessages only supplies one when the last
+    // message is an assistant message being continued, which it never is here).
+    // Every assistant reply then inserts under the id "", and the primary key
+    // collapses them all into a single row with no error to notice.
+    generateMessageId: generateId,
     async onFinish({ responseMessage }) {
       // Also fires when the client aborts, so partial replies are kept.
       try {

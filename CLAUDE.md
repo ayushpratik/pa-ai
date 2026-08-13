@@ -148,8 +148,19 @@ drizzle/                           generated migrations
   with `npm run check:model` rather than assuming an id is valid.
 - **`messages.id` is `text`, not `uuid`.** The AI SDK client generates nanoid-style message
   ids. A `uuid` column rejects every real request.
+- **`toUIMessageStreamResponse` must be passed `generateMessageId`.** Without it the SDK
+  leaves the response message's id as `""` — `originalMessages` supplies one only when the
+  last message is an assistant message being continued, which it never is here. Every
+  assistant reply then inserted under the id `""`, and `saveMessage`'s
+  `onConflictDoNothing` collapsed them all into one row. Silent: no error, no log line.
+  That was the cause of the long-standing "assistant replies are not persisted" bug.
 - **`messages.parts` is `jsonb`** holding the AI SDK parts array, so tool calls and reasoning
   blocks persist without a migration. Do not flatten it to a text column.
+- **Only terminal tool parts are persisted.** `saveMessage` drops `tool-*` and `dynamic-tool`
+  parts that are not `output-available` or `output-error`, because a reloaded thread is fed
+  back through `convertToModelMessages`, which throws on a tool call with no result. That
+  happens whenever a stream aborts mid-tool or a plan card is left awaiting approval. A
+  message left with no parts after filtering is not written at all.
 - **The user message is persisted before the model is called**, so an aborted or failed
   generation never loses what the user typed. The assistant message is written in the
   stream's `onFinish`, which also fires on abort.
@@ -303,10 +314,6 @@ posted id from appending to another account's thread.
   to every real account. Delete them, then add `user_id` foreign keys to `users.id` with
   `on delete cascade` — the constraint cannot be applied while those orphans exist.
 - Expired `sessions` rows are never swept. A job for the pg-boss worker below.
-- **Assistant replies are not persisted.** Only user messages reach the `messages` table;
-  the write in `streamText`'s `onFinish` does not land, and this predates the auth work
-  (no assistant row exists in the database at all). Reloading a thread shows only what the
-  user typed. Not yet diagnosed.
 - Long-running work (outreach sequences, scheduled sends, enrichment) must not live in route
   handlers. A separate worker process is needed — pg-boss on the same Postgres is the
   expected choice.
