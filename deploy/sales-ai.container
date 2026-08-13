@@ -1,0 +1,32 @@
+# Rootless Podman quadlet unit. Install it on the server as
+#   ~/.config/containers/systemd/sales-ai.container
+# then: systemctl --user daemon-reload && systemctl --user start sales-ai
+#
+# Requires `loginctl enable-linger <deploy-user>` so the service survives logout.
+# See README section 6.2.
+
+[Unit]
+Description=Personal Assistant AI
+After=network-online.target
+Wants=network-online.target
+
+[Container]
+Image=localhost/sales-ai:latest
+EnvironmentFile=/etc/sales-ai/env
+
+# Bridged networking: the app is reachable only on loopback, where nginx proxies
+# to it. DATABASE_URL must use host.containers.internal for the host Postgres,
+# which requires listen_addresses and a pg_hba.conf line for the podman bridge.
+PublishPort=127.0.0.1:3001:3001
+
+# Simpler alternative: comment out PublishPort above and uncomment Network below.
+# The app then listens on the host's :3001 directly and reaches Postgres at
+# 127.0.0.1:5432 with no Postgres configuration change at all.
+#Network=host
+
+[Service]
+Restart=always
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

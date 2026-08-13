@@ -1,4 +1,4 @@
-import { drizzle } from "drizzle-orm/postgres-js";
+import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import { env } from "@/lib/env";
 import * as schema from "./schema";
@@ -9,11 +9,29 @@ const globalForDb = globalThis as unknown as {
   sqlClient?: ReturnType<typeof postgres>;
 };
 
-const client = globalForDb.sqlClient ?? postgres(env.databaseUrl, { max: 10 });
+let instance: PostgresJsDatabase<typeof schema> | undefined;
 
-if (process.env.NODE_ENV !== "production") {
-  globalForDb.sqlClient = client;
+// Connecting at module load would read DATABASE_URL during `next build`, whose
+// page-data collection imports every route. The container image is built
+// without any environment, so the pool is opened on first use instead, the same
+// way lib/model.ts defers constructing the Gemini provider.
+function getDb(): PostgresJsDatabase<typeof schema> {
+  if (!instance) {
+    const client = globalForDb.sqlClient ?? postgres(env.databaseUrl, { max: 10 });
+    if (process.env.NODE_ENV !== "production") {
+      globalForDb.sqlClient = client;
+    }
+    instance = drizzle(client, { schema });
+  }
+  return instance;
 }
 
-export const db = drizzle(client, { schema });
+export const db = new Proxy({} as PostgresJsDatabase<typeof schema>, {
+  get(_target, property) {
+    const real = getDb();
+    const value = Reflect.get(real, property);
+    return typeof value === "function" ? value.bind(real) : value;
+  },
+});
+
 export { schema };

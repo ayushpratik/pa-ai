@@ -155,6 +155,11 @@ drizzle/                           generated migrations
   stream's `onFinish`, which also fires on abort.
 - **`lib/model.ts` builds the provider lazily.** Reading the API key at module load breaks
   `next build` in environments without the key.
+- **`db/index.ts` opens the Postgres pool lazily too**, behind a `Proxy` around the drizzle
+  instance, for the same reason: `next build` collects page data by importing every route,
+  so a connection at module load made `DATABASE_URL` a build-time requirement. That only
+  went unnoticed locally because `next build` loads `.env.local`; it failed the moment the
+  container image was built without one. Do not move either read back to module scope.
 - **Server-only modules import `server-only`.** Types crossing to client components live in
   `lib/types.ts` to avoid pulling that guard into the client bundle.
 - **API routes set `runtime = "nodejs"`** — the Postgres driver needs Node APIs, and this
@@ -309,7 +314,20 @@ posted id from appending to another account's thread.
   dependencies. Not shipped, not reachable at runtime.
 - Assistant messages render as plain text. Markdown rendering is not implemented.
 - Conversation titles are truncated from the first user message, not model-generated.
-- Hosting target is undecided; nothing in the code assumes one.
+- Hosting target is a single Linux server: the repo in `/var/www/pa.kishul.com`, built and
+  run rootless with **Podman** on `127.0.0.1:3001`, nginx terminating TLS for
+  `pa.kishul.com` and reverse-proxying to it, and Postgres on the host rather than in a
+  container. `Dockerfile` and `deploy/sales-ai.container` (a systemd quadlet unit) are
+  committed; the operator steps are `README.md` section 6.2. The image is built **on the
+  server**, so there is no registry and no cross-architecture build. This is the one place
+  deployment reaches into the code: `output: "standalone"` in `next.config.ts` is required,
+  because the runtime stage copies only `.next/standalone`, `.next/static` and `public/` and
+  runs `node server.js` — removing that option silently breaks the image while leaving
+  `npm run start` working. Migrations run from a separate `migrator` build target, which
+  keeps drizzle-kit (a devDependency) out of the runtime image and means the server needs no
+  Node.js of its own. Two nginx settings are not optional: `proxy_buffering off` (or the
+  streamed reply arrives in one lump) and `proxy_read_timeout 300s` to match the chat route's
+  `maxDuration`, since nginx's 60s default 504s a long turn mid-stream.
 - **`.env.example` previously contained a live `GOOGLE_GENERATIVE_AI_API_KEY`.** It has been
   replaced with a placeholder, but that key was committed and should be rotated at
   https://aistudio.google.com/apikey.

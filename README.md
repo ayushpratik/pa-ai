@@ -196,7 +196,7 @@ particular host, but it **must run on a Node.js runtime** — API routes declare
 `runtime = "nodejs"` because the Postgres driver needs Node APIs, and the chat route
 declares `maxDuration = 300` because a research-and-send turn can run long.
 
-### Build and run anywhere (VM, container, Render, Fly, Railway)
+### 6.1 Build and run anywhere (VM, container, Render, Fly, Railway)
 
 ```bash
 npm ci
@@ -214,30 +214,196 @@ Deploy checklist for every release:
 2. Run `npx drizzle-kit migrate` against the production `DATABASE_URL`.
 3. `npm run build && npm run start` (or redeploy the image).
 
-### Dockerfile
+### 6.2 Podman on a Linux server (pa.kishul.com)
 
-There is no Dockerfile in the repo; this one works as a starting point:
+This is the deployment this repo is set up for: the image is **built on the server**, runs
+rootless on `127.0.0.1:3001`, uses the **Postgres already installed on that host**, and
+nginx terminates TLS for `pa.kishul.com` and reverse-proxies to it.
 
-```dockerfile
-FROM node:20-alpine AS build
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+Two files in the repo support it:
 
-FROM node:20-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app ./
-EXPOSE 3000
-CMD ["npm", "run", "start"]
+| File | Purpose |
+| --- | --- |
+| [Dockerfile](Dockerfile) | Multi-stage build. Podman reads `Dockerfile` natively — no flag needed. The `runner` target is the app; the `migrator` target runs Drizzle migrations |
+| [deploy/sales-ai.container](deploy/sales-ai.container) | systemd quadlet unit, installed under the deploy user |
+
+Building on the server means no cross-architecture build, no registry, and no
+`podman save` / `scp` of a large tar for every release.
+
+**Why one container and not a pod.** With Postgres on the host there is exactly one
+container to run, and a pod would add an infra layer without adding anything. If Postgres
+ever moves into a pod alongside the app, neither the Dockerfile nor the quadlet has to
+change — only the networking lines below.
+
+#### 1. Server prerequisites
+
+```bash
+sudo dnf install -y podman nginx postgresql-server    # or: apt install podman nginx postgresql
+podman --version                                      # 4.4+ is required for quadlet
+
+sudo loginctl enable-linger deploy                    # so the rootless unit survives logout
 ```
 
-The build step does not need a Gemini key — `lib/model.ts` builds the provider lazily
-precisely so `next build` works without one. It does not need `DATABASE_URL` either.
+Do the rest as the non-root deploy user (`deploy` below). Nothing here needs root except
+the nginx config, the certbot run, and creating `/etc/sales-ai`.
 
-### Vercel
+#### 2. Get the code
+
+```bash
+sudo mkdir -p /var/www/pa.kishul.com
+sudo chown deploy:deploy /var/www/pa.kishul.com
+git clone <repo-url> /var/www/pa.kishul.com
+cd /var/www/pa.kishul.com
+```
+
+#### 3. Create the database on the host Postgres
+
+```bash
+sudo -u postgres createuser --pwprompt salesai
+sudo -u postgres createdb --owner=salesai sales_ai
+```
+
+#### 4. Write the environment file
+
+The container never reads `.env.local`; it is given `/etc/sales-ai/env`, which is a plain
+`KEY=value` file (no `export`, no quotes around values — systemd does not strip them).
+
+```bash
+sudo install -d -o deploy -g deploy -m 700 /etc/sales-ai
+sudo install -o deploy -g deploy -m 600 /dev/null /etc/sales-ai/env
+```
+
+Fill it with every variable from [section 3](#3-what-each-variable-does). The
+production-specific values:
+
+```
+DATABASE_URL=postgresql://salesai:<password>@host.containers.internal:5432/sales_ai
+APP_URL=https://pa.kishul.com
+AUTH_SECRET=<openssl rand -base64 32>
+GOOGLE_GENERATIVE_AI_API_KEY=...
+GOOGLE_LOGIN_REDIRECT_URI=https://pa.kishul.com/api/auth/google/callback
+GOOGLE_OAUTH_REDIRECT_URI=https://pa.kishul.com/api/integrations/google/callback
+SEND_EMAIL=none
+```
+
+Leave `SEND_EMAIL=none` until you actually mean to deliver mail to real people — see
+[the outbound guard](#the-outbound-guard--read-this-before-deploying).
+
+**Reaching the host Postgres.** There are two ways, and the `DATABASE_URL` host differs:
+
+- **Bridged** (what the shipped quadlet does): `host.containers.internal:5432`. Postgres
+  must accept connections from the podman bridge — set `listen_addresses = '*'` in
+  `postgresql.conf` and add `host sales_ai salesai 10.88.0.0/16 scram-sha-256` to
+  `pg_hba.conf`, then `sudo systemctl restart postgresql`.
+- **Host network** (simplest): uncomment `Network=host` in the quadlet, comment out
+  `PublishPort`, and use `127.0.0.1:5432` in `DATABASE_URL`. No Postgres change at all.
+  The app then binds the host's port 3001 itself.
+
+#### 5. Build the images
+
+```bash
+cd /var/www/pa.kishul.com
+podman build -t sales-ai:latest .
+podman build --target migrator -t sales-ai-migrate:latest .
+```
+
+Neither build needs an API key, a database, or any environment file — `lib/model.ts` builds
+the Gemini provider lazily and `src/db/index.ts` opens the Postgres pool on first use, both
+so `next build` runs on a bare machine.
+
+`next build` needs roughly **4 GB of RAM**; on a 2 GB server it is killed by the OOM killer
+partway through with a bare `signal SIGKILL`. Add swap first if the box is small.
+
+#### 6. Run the migrations
+
+```bash
+podman run --rm --network=host --env-file=/etc/sales-ai/env sales-ai-migrate:latest
+```
+
+`--network=host` is used here regardless of which networking option you chose above, so the
+one-off migration always reaches Postgres on loopback. If your `DATABASE_URL` points at
+`host.containers.internal`, override it for this command:
+
+```bash
+podman run --rm --network=host --env-file=/etc/sales-ai/env \
+  -e DATABASE_URL='postgresql://salesai:<password>@127.0.0.1:5432/sales_ai' \
+  sales-ai-migrate:latest
+```
+
+This container carries drizzle-kit, so the server needs no Node.js installed.
+
+#### 7. Install and start the service
+
+```bash
+mkdir -p ~/.config/containers/systemd
+cp deploy/sales-ai.container ~/.config/containers/systemd/
+systemctl --user daemon-reload
+systemctl --user start sales-ai
+
+systemctl --user status sales-ai
+journalctl --user -u sales-ai -f
+curl -I http://127.0.0.1:3001          # expect 200 or 307
+```
+
+Quadlet units are generated at `daemon-reload` time, so there is no `systemctl enable` —
+the `[Install] WantedBy=default.target` line in the unit already handles start-on-boot,
+which is what linger makes effective.
+
+#### 8. nginx and TLS
+
+`/etc/nginx/conf.d/pa.kishul.com.conf`:
+
+```nginx
+server {
+    listen 80;
+    server_name pa.kishul.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:3001;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade           $http_upgrade;
+        proxy_set_header Connection        "upgrade";
+
+        # Not optional. Without this the streamed reply arrives in one lump.
+        proxy_buffering off;
+
+        # Matches the chat route's maxDuration = 300. nginx's 60s default
+        # returns 504 in the middle of a long research-and-send turn.
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+```
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+sudo certbot --nginx -d pa.kishul.com
+```
+
+certbot rewrites this block for port 443 and keeps the proxy settings, so both lines above
+survive. Finally, register the two `https://pa.kishul.com/...` redirect URIs in the Google
+console ([section 5](#5-google-oauth-setup-optional)).
+
+#### 9. Redeploy on every release
+
+```bash
+cd /var/www/pa.kishul.com
+git pull
+podman build -t sales-ai:latest .
+podman build --target migrator -t sales-ai-migrate:latest .
+podman run --rm --network=host --env-file=/etc/sales-ai/env sales-ai-migrate:latest
+systemctl --user restart sales-ai
+```
+
+Signed-in users stay signed in across a restart — sessions are database rows, not process
+state. Occasionally reclaim disk with `podman image prune -f`.
+
+### 6.3 Vercel
 
 1. Import the repository; the framework preset is detected automatically.
 2. Add every variable from section 3 under Project Settings → Environment Variables.
@@ -315,6 +481,11 @@ host avoids that.
 | Emails drafted but never delivered | `SEND_EMAIL` is `none` (the default), or it holds an invalid value and fell back to `none` |
 | Postgres "too many connections" on serverless | Use a pooled connection string (section 4) |
 | Assistant says it cannot research | `SEARCH_API_KEY` is not set |
+| Container runs but nginx returns 502 | The app is bound to the wrong interface or port. `HOSTNAME=0.0.0.0` and `PORT=3001` must both be in effect (they are set in the Dockerfile; an entry in `/etc/sales-ai/env` overrides them) |
+| `ECONNREFUSED ...:5432` from the container | Bridged networking without the Postgres side done: set `listen_addresses` and add the `10.88.0.0/16` line to `pg_hba.conf`, or switch the quadlet to `Network=host` (section 6.2 step 4) |
+| Replies appear all at once instead of streaming | `proxy_buffering off` is missing from the nginx location block |
+| The service dies when you log out of SSH | `loginctl enable-linger <deploy-user>` was not run |
+| `podman build` fails with `signal SIGKILL` | Out of memory. `next build` needs about 4 GB; add swap or build on a larger box |
 
 ---
 

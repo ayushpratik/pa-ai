@@ -1,0 +1,21 @@
+node_modules
+.next
+.git
+.gitignore
+
+# Never let local secrets into the build context.
+.env
+.env.*
+env.txt
+
+.qodo
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+AGENTS.md
+CLAUDE.md
+README.md
+Dockerfile
+.dockerignore
+npm-debug.log*
+.DS_Store
