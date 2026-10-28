@@ -335,6 +335,26 @@ posted id from appending to another account's thread.
   Node.js of its own. Two nginx settings are not optional: `proxy_buffering off` (or the
   streamed reply arrives in one lump) and `proxy_read_timeout 300s` to match the chat route's
   `maxDuration`, since nginx's 60s default 504s a long turn mid-stream.
+- **Second deployment path: `DOKER.md` + `docker-compose.yml`** for `pa-ai.kishul.com` on an
+  Ubuntu server that already runs nginx for other sites. Images are built on a Mac with
+  `--platform linux/amd64` (the Mac is arm64), shipped with `docker save | gzip` and `scp`, so
+  there is no registry and no source or Node on the server. Compose runs Postgres in a
+  container (no host Postgres changes), a `tools`-profile `migrate` service from the
+  `migrator` target, and the app bound to `127.0.0.1:3010` (3010 to avoid clashing with other
+  sites). The same two nginx settings (`proxy_buffering off`, `proxy_read_timeout 300s`) apply.
+  The Podman path in README 6.2 remains valid for `pa.kishul.com`.
+- **Third deployment path: `PODMAN.md`** for `pa-ai.kishul.com` on the same Ubuntu server
+  (`147.182.228.207`), for use instead of `DOKER.md`. The image is **built on the server**,
+  not on the Mac: the Mac is arm64 and the server x86_64, and `next build` under qemu amd64
+  emulation segfaults (`qemu: uncaught target signal 11`), so a cross-platform build is not
+  viable. The source is uploaded with `rsync` (excluding `node_modules`, `.next`, `.git`,
+  `.env*`) to `~/sales-ai/src-build`, and a 4 GB swap file is added for the build. Postgres
+  and the app run as two containers in one **pod** (`sales-ai`), which share `localhost`, so
+  `DATABASE_URL` uses `127.0.0.1:5432` and no network DNS is needed (it differs between
+  Podman 3.x on Ubuntu 22.04 and 4.x). The pod publishes only `127.0.0.1:3010`; containers
+  use `--restart=always` plus `podman-restart.service` rather than quadlets, which need
+  Podman 4.4+. Same two nginx settings apply. Do not run this and the Docker path on the same
+  port.
 - **`.env.example` previously contained a live `GOOGLE_GENERATIVE_AI_API_KEY`.** It has been
   replaced with a placeholder, but that key was committed and should be rotated at
   https://aistudio.google.com/apikey.

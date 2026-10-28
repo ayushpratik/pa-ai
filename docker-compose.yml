@@ -1,0 +1,38 @@
+# Production stack for pa-ai.kishul.com. Copied to /opt/sales-ai on the server.
+# Steps: DOKER.md
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # On demand only: docker compose run --rm migrate
+  migrate:
+    image: sales-ai-migrate:latest
+    profiles: ["tools"]
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    image: sales-ai:latest
+    restart: unless-stopped
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    # Loopback only; nginx proxies to it. 3010 avoids clashing with other sites.
+    ports:
+      - "127.0.0.1:3010:3001"
+
+volumes:
+  pgdata:

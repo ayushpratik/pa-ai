@@ -227,6 +227,9 @@ Deploy checklist for every release:
 2. Run `npx drizzle-kit migrate` against the production `DATABASE_URL`.
 3. `npm run build && npm run start` (or redeploy the image).
 
+> A Docker Compose + `scp` alternative (image built on a Mac for amd64, deployed to
+> `pa-ai.kishul.com`) is written step by step in [DOKER.md](DOKER.md).
+
 ### 6.2 Podman on a Linux server (pa.kishul.com)
 
 This is the deployment this repo is set up for: the image is **built on the server**, runs
