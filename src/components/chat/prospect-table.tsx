@@ -3,6 +3,8 @@
 import { useState } from "react";
 import {
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   FileSpreadsheet,
   FileText,
   Link2,
@@ -11,6 +13,7 @@ import {
 } from "lucide-react";
 import { useConversationEntities } from "@/components/chat/conversation-entities";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { downloadEntities, type ExportFormat } from "@/lib/export";
 import type { EntitySummary } from "@/lib/types";
 
@@ -105,14 +108,27 @@ function ExportChips({ fallback }: { fallback: EntitySummary[] }) {
   );
 }
 
+// Rows shown per page in the chat preview. Export ignores this and always
+// downloads everything.
+const PAGE_SIZE = 10;
+
 export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
+  const [page, setPage] = useState(0);
+
   if (entities.length === 0) {
     return (
       <p className="text-muted-foreground text-sm">Nothing matched.</p>
     );
   }
 
+  // Derived from the full set, not the current page, so columns stay put while paging.
   const columns = deriveColumns(entities);
+
+  const pageCount = Math.ceil(entities.length / PAGE_SIZE);
+  // Clamped in case the result set shrinks under a page the user was on.
+  const current = Math.min(page, pageCount - 1);
+  const start = current * PAGE_SIZE;
+  const visible = entities.slice(start, start + PAGE_SIZE);
 
   return (
     <div className="bg-card w-full rounded-xl border text-sm shadow-sm">
@@ -138,7 +154,7 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
             </tr>
           </thead>
           <tbody>
-            {entities.map((entity) => (
+            {visible.map((entity) => (
               <tr key={entity.id} className="border-t align-top">
                 <td className="px-4 py-2.5">
                   <span className="font-medium">{entity.name}</span>
@@ -202,6 +218,47 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
           </tbody>
         </table>
       </div>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-2 border-t px-4 py-2">
+          <p className="text-muted-foreground text-xs">
+            {start + 1}-{start + visible.length} of {entities.length}
+          </p>
+          <div className="flex items-center gap-1">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setPage(current - 1)}
+              disabled={current === 0}
+              aria-label="Previous page"
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+            {Array.from({ length: pageCount }, (_, index) => (
+              <Button
+                key={index}
+                size="icon-sm"
+                variant={index === current ? "secondary" : "ghost"}
+                onClick={() => setPage(index)}
+                aria-label={`Page ${index + 1}`}
+                aria-current={index === current ? "page" : undefined}
+                className="text-xs"
+              >
+                {index + 1}
+              </Button>
+            ))}
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() => setPage(current + 1)}
+              disabled={current === pageCount - 1}
+              aria-label="Next page"
+            >
+              <ChevronRight className="size-4" />
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

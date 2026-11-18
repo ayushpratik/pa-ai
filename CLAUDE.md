@@ -311,6 +311,12 @@ history, so there is no export endpoint and no extra query.
   exceljs writes strings as string cells, never formulas (verified), and the apostrophe
   would show literally there. Side effect: a CSV phone number like `+91...` reads `'+91...`.
 - CSV carries a UTF-8 BOM so Excel does not mangle non-ASCII names.
+- **The preview is paginated, the export is not.** `ProspectTable` shows `PAGE_SIZE = 10`
+  rows at a time with previous/next and numbered page buttons (at most 10 pages at the
+  100-result ceiling). Pagination is local `useState` over the table's own rows; the
+  export chips read the full conversation set from context and never see the page, so a
+  download is always every record in one file. Attribute columns are derived from the
+  full set rather than the visible page, so they do not shift while paging.
 
 ### Authentication and the profile gate (step 3)
 
