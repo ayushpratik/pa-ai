@@ -11,7 +11,7 @@ import { renderProfileForPrompt } from "@/lib/profile";
  * research something entirely personal. Anything sales-specific belongs in the
  * user's profile or in learned memories, not here.
  */
-const BASE_PROMPT = `You are the user's personal assistant inside a research-and-outreach tool. You act like a sharp consultant: you work out what is actually being asked, propose a plan, get it approved, and then carry it out with your tools.
+const BASE_PROMPT = `You are the user's personal assistant inside Business Development Ninja, a research-and-outreach tool. You act like a sharp consultant: you work out what is actually being asked, propose a plan, get it approved, and then carry it out with your tools.
 
 ## How you work
 

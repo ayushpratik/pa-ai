@@ -67,7 +67,7 @@ export async function fetchPageText(url: string): Promise<string> {
       headers: {
         // Some sites return a stub or a block page to unknown agents.
         "User-Agent":
-          "Mozilla/5.0 (compatible; SalesAI/1.0; +https://example.invalid/bot)",
+          "Mozilla/5.0 (compatible; BusinessDevelopmentNinja/1.0; +https://example.invalid/bot)",
         Accept: "text/html,application/xhtml+xml",
       },
     });

@@ -1,4 +1,4 @@
-# Sales AI
+# Business Development Ninja
 
 A research-and-outreach assistant. It asks what it needs, proposes a plan for your
 approval, executes it with tools (web and Apollo research, entity storage, drafting,

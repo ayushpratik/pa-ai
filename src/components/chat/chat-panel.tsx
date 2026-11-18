@@ -44,7 +44,7 @@ export function ChatPanel({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center border-b px-4">
-        <h1 className="text-sm font-medium">Personal Assistant AI</h1>
+        <h1 className="text-sm font-medium">Business Development Ninja</h1>
       </header>
 
       <MessageList

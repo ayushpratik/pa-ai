@@ -6,9 +6,17 @@
 
 ---
 
-## Project: Personal Assistant AI
+## Project: Business Development Ninja
 
 A research-and-outreach assistant, built step by step.
+
+The product name is **Business Development Ninja** (renamed from "Personal Assistant AI" /
+"Sales AI"). It appears in the page title (`app/layout.tsx`), the auth and chat headers,
+the README title, the base prompt, and the web-fetch User-Agent. Infrastructure
+identifiers deliberately keep `sales-ai` / `sales_ai` — container, pod, image and volume
+names, server paths, the database and its user, and the npm package name — because
+renaming them would break the running deployments. Change those only as a planned
+migration.
 
 - **Step 1 (done)** — an AI chat screen on Gemini Flash Lite.
 - **Step 2 (done)** — the orchestrator: a personal assistant that asks what it needs,
