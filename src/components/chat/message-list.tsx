@@ -2,6 +2,7 @@
 
 import type { ChatStatus, UIMessage } from "ai";
 import { useEffect, useRef } from "react";
+import { ConversationEntitiesProvider } from "@/components/chat/conversation-entities";
 import { ToolPart } from "@/components/chat/tool-part";
 import { cn } from "@/lib/utils";
 
@@ -41,13 +42,15 @@ export function MessageList({
   return (
     <div className="min-h-0 flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6">
-        {messages.map((message) => (
-          <MessageBlock
-            key={message.id}
-            message={message}
-            onResume={onResume}
-          />
-        ))}
+        <ConversationEntitiesProvider messages={messages}>
+          {messages.map((message) => (
+            <MessageBlock
+              key={message.id}
+              message={message}
+              onResume={onResume}
+            />
+          ))}
+        </ConversationEntitiesProvider>
 
         {waitingForFirstToken && (
           <div className="text-muted-foreground flex items-center gap-1.5 text-sm">

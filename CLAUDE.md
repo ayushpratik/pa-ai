@@ -17,6 +17,7 @@ A research-and-outreach assistant, built step by step.
   preferences over time.
 - **Result counts (done)** — the user chooses how many results a search returns
   (20, 30, ... 100) instead of a fixed cap.
+- **Export (done)** — found results download as Excel or CSV from chips on the result table.
 - **Step 3 (done)** — accounts: email/password and Google sign-in, database-backed
   sessions, and a profile gate a new account must pass before it can use the assistant.
 
@@ -37,6 +38,7 @@ lives in the user's profile and in learned memories. Keep it that way when exten
 | Tool schemas | `zod` (a direct dependency since step 2, not just a transitive one) |
 | Email | `nodemailer` (SMTP) and `googleapis` (Gmail send + OAuth2) |
 | Auth | Hand-rolled: Node `crypto` (scrypt + random tokens), no auth library |
+| Export | `exceljs` for .xlsx (browser build, dynamically imported); CSV is hand-written |
 
 Note: `lucide-react` v1 dropped brand icons, so LinkedIn is represented by the generic
 `Link2` icon.
@@ -119,7 +121,8 @@ src/
     api/integrations/google/       the *sending* consent (gmail.send) and its callback
   components/chat/                 chat-panel, message-list, composer, sidebar,
                                    tool-part (dispatcher), plan-card,
-                                   prospect-table, draft-card
+                                   prospect-table (with export chips), draft-card,
+                                   conversation-entities (context of all found records)
   components/auth/                 auth-form (login and signup)
   components/settings/             settings-screen, profile-form, onboarding-screen
   components/ui/                   shadcn primitives
@@ -140,6 +143,7 @@ src/
   lib/tools/search.ts              Serper search + page text extraction
   lib/tools/apollo.ts              Apollo people search and email reveal
   lib/types.ts                     types shared across the server/client boundary
+  lib/export.ts                    client-side CSV / Excel export of found records
 scripts/check-model.mjs
 drizzle/                           generated migrations
 ```
@@ -281,6 +285,33 @@ it conditionally when it depends on an optional key, so the model is never told 
 capability that would fail on every call. If the output deserves a rich card rather than a
 one-line summary, add a branch in `components/chat/tool-part.tsx`.
 
+### Exporting results
+
+Every result table (`saveEntities` output) has two chips in its header, **Excel** and
+**CSV**. Export is entirely client-side: the records are already in the chat's message
+history, so there is no export endpoint and no extra query.
+
+- **A download contains every record found in the conversation**, not just that table's
+  batch, so a 100-result search saved in several batches still exports as one file.
+  `MessageList` wraps the thread in `ConversationEntitiesProvider`, which runs
+  `collectConversationEntities` over all `saveEntities` and `enrichContact` outputs,
+  deduped by entity id. Later results merge over earlier ones (non-null fields win,
+  attributes are merged), so an email revealed by enrichment appears in the row that the
+  original search produced. `listEntities` output is deliberately not included: it is a
+  lookup of past work, not this conversation's results.
+- **Columns**: Name, Type, Organisation, Email, LinkedIn, then every attribute key with a
+  value anywhere in the set (most common first, humanised), then Source and Contacted.
+  Derived from the data, because the entity shape is domain-agnostic.
+- **exceljs is imported dynamically** inside `toXlsx`, so it is fetched only when the
+  Excel chip is clicked and stays out of the chat bundle. Bundlers pick its prebuilt
+  `browser` entry (`dist/exceljs.min.js`). Chosen over SheetJS, whose npm release is stale
+  with advisories, and over a hand-rolled zip writer.
+- **CSV formula injection is neutralised.** Values come from scraped pages, so a cell
+  starting with `= + - @` gets an apostrophe prefix in the CSV. Not applied to .xlsx:
+  exceljs writes strings as string cells, never formulas (verified), and the apostrophe
+  would show literally there. Side effect: a CSV phone number like `+91...` reads `'+91...`.
+- CSV carries a UTF-8 BOM so Excel does not mangle non-ASCII names.
+
 ### Authentication and the profile gate (step 3)
 
 **Hand-rolled, no auth library.** Everything needed was already present: Node's `crypto`
@@ -348,6 +379,12 @@ posted id from appending to another account's thread.
   expected choice.
 - 4 moderate dev-only npm advisories remain via `drizzle-kit`'s deprecated `@esbuild-kit/*`
   dependencies. Not shipped, not reachable at runtime.
+- `exceljs` 4.4.0 adds a moderate `uuid` advisory and pulls `archiver`/`unzipper` (with old
+  `glob`/`rimraf`) for its Node file I/O. The browser `dist` bundle is what ships, and the app
+  only calls `writeBuffer`, so none of that is reachable.
+- As of 2026-11-18, `npm audit` also reports many advisories outside this list, including a
+  **critical** one on `next` 16.3.0 and high ones on `nodemailer` and `undici`. Upgrade `next`
+  first.
 - Assistant messages render as plain text. Markdown rendering is not implemented.
 - Conversation titles are truncated from the first user message, not model-generated.
 - Hosting target is a single Linux server: the repo in `/var/www/pa.kishul.com`, built and

@@ -1,7 +1,17 @@
 "use client";
 
-import { CheckCircle2, Link2, Mail } from "lucide-react";
+import { useState } from "react";
+import {
+  CheckCircle2,
+  FileSpreadsheet,
+  FileText,
+  Link2,
+  Loader2,
+  Mail,
+} from "lucide-react";
+import { useConversationEntities } from "@/components/chat/conversation-entities";
 import { Badge } from "@/components/ui/badge";
+import { downloadEntities, type ExportFormat } from "@/lib/export";
 import type { EntitySummary } from "@/lib/types";
 
 /**
@@ -37,6 +47,64 @@ function humanize(key: string): string {
     .replace(/^\w/, (char) => char.toUpperCase());
 }
 
+/**
+ * Downloads every record found in the conversation, not just this table's
+ * batch, so a search saved in several batches still exports as one file. Falls
+ * back to this table's rows if rendered outside the conversation provider.
+ */
+function ExportChips({ fallback }: { fallback: EntitySummary[] }) {
+  const all = useConversationEntities();
+  const entities = all && all.length > 0 ? all : fallback;
+  const [pending, setPending] = useState<ExportFormat | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  async function run(format: ExportFormat) {
+    setPending(format);
+    setFailed(false);
+    try {
+      await downloadEntities(entities, format);
+    } catch (error) {
+      console.error("Export failed", error);
+      setFailed(true);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  const chips: { format: ExportFormat; label: string; icon: typeof FileText }[] = [
+    { format: "xlsx", label: "Excel", icon: FileSpreadsheet },
+    { format: "csv", label: "CSV", icon: FileText },
+  ];
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {failed && (
+        <span className="text-destructive text-xs">Export failed</span>
+      )}
+      <span className="text-muted-foreground hidden text-xs sm:inline">
+        Export {entities.length}:
+      </span>
+      {chips.map(({ format, label, icon: Icon }) => (
+        <button
+          key={format}
+          type="button"
+          onClick={() => run(format)}
+          disabled={pending !== null}
+          title={`Download all ${entities.length} results as ${label}`}
+          className="hover:bg-muted inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors disabled:opacity-50"
+        >
+          {pending === format ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <Icon className="size-3" />
+          )}
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
   if (entities.length === 0) {
     return (
@@ -52,7 +120,7 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
         <p className="font-medium">
           {entities.length} {entities.length === 1 ? "record" : "records"}
         </p>
-        <p className="text-muted-foreground text-xs">Saved and deduplicated</p>
+        <ExportChips fallback={entities} />
       </div>
 
       <div className="overflow-x-auto">
