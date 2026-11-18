@@ -85,7 +85,8 @@ export async function apolloSearchPeople(params: {
       q_organization_name: params.organizationNames?.join(" "),
       q_keywords: params.keywords,
       page: 1,
-      per_page: Math.min(params.limit, 25),
+      // Apollo allows up to 100 per page, which matches the tool-level ceiling.
+      per_page: Math.min(params.limit, 100),
     },
   );
 

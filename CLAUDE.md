@@ -15,6 +15,8 @@ A research-and-outreach assistant, built step by step.
   proposes a plan for approval, executes it with tools (web/Apollo research, entity
   storage, drafting, Gmail sending), suggests the next step, and learns the user's
   preferences over time.
+- **Result counts (done)** — the user chooses how many results a search returns
+  (20, 30, ... 100) instead of a fixed cap.
 - **Step 3 (done)** — accounts: email/password and Google sign-in, database-backed
   sessions, and a profile gate a new account must pass before it can use the assistant.
 
@@ -245,8 +247,35 @@ exactly how a test-mode send reaches a real prospect.
 Every attempt writes an `outreach` row recording the mode and transport used, which is also
 what powers "has this person already been contacted?" across conversations.
 
-**Adding a tool**: define it in `lib/tools/index.ts` with a `zod` `inputSchema`, clamp any
-batch size through `clamp()` (default 10, max 25), call `requireApproval()` first if it
+**Result counts are the user's choice, up to 100.** When a request is about finding records
+and no number was given, the prompt tells the model to ask in its clarifying message: "20,
+30, 40 ... 100? (default 20)". The answer becomes the `limit` on `searchWeb`,
+`extractEntities`, `listEntities` and `searchApollo`, all of which pass it through
+`resultCount()` (default 20, ceiling `MAX_RESULTS = 100`). Serper and Apollo both accept 100
+per request, so their inner caps were raised to match. The costly actions — `enrichContact`,
+`draftOutreach`, `sendEmail` — deliberately keep `MAX_ACTION_BATCH = 25` per call: one call
+must not spend 100 Apollo credits or send 100 emails, and must fit in `maxDuration`. The
+model is told to work through larger lists in batches.
+
+**The count question is gated server-side, not just prompted.** With only a prompt rule,
+Gemini skipped the question and went straight to the plan card with the default, so
+"Approve and run" silently meant 20. Now `proposePlan` takes a required `resultCount`, and
+its `execute` refuses (returning `{ blocked: true, reason: "result-count", error }`, the
+same shape as the approval gate) unless that number appears in a user message of this
+conversation — as digits, as a word ("thirty"), or as "default" for 20. Messages are read
+from the database via `loadMessages`; the user's latest message is already persisted
+before the model runs. A plan counts as record-finding, and so needs a count, if any step
+names a search/extract/save tool **or** its text matches find/search/list/etc. — `tool` is
+optional, so the text check stops a plan that omits it from bypassing the gate. The error
+text hands the model the exact question to ask. A user who states a number in their first
+message ("find 30 ...") passes straight through. The count is returned with the
+`proposePlan` result (not stored in `plans`, so no migration) and shown on the plan card
+as "Results: N". It is not yet enforced on the search tools' own `limit`; storing it on
+the plan row would allow that.
+
+**Adding a tool**: define it in `lib/tools/index.ts` with a `zod` `inputSchema`, pass a
+result count through `resultCount()` (default 20, max 100) or, for anything that costs money
+or contacts someone, cap the batch at `MAX_ACTION_BATCH` (25); call `requireApproval()` first if it
 costs money or contacts a person, and return errors as values rather than throwing. Register
 it conditionally when it depends on an optional key, so the model is never told about a
 capability that would fail on every call. If the output deserves a rich card rather than a
@@ -364,8 +393,10 @@ posted id from appending to another account's thread.
 - Memory dedupe is a word-set fingerprint, so it catches exact and reordered repeats but not
   paraphrases ("4 sentences" vs "four sentences"). Embeddings would fix it if it becomes a
   nuisance.
-- Entity dedupe does one lookup per record. Fine at a 25-row batch cap; batch it if the cap
-  ever rises.
+- Entity dedupe does one lookup per record. The result ceiling is now 100, so a full save is
+  up to 100 sequential lookups — acceptable, but batch it if saves get slow.
+- At 100 results, `saveEntities` asks the model to emit 100 records in one tool call. If
+  Gemini Flash Lite truncates or times out on that, split saves into chunks.
 - `enrichContact` and `sendEmail` still run inside the chat request. `maxDuration` is 300s,
   which covers the current batch caps, but scheduled sends and multi-touch sequences are
   what pg-boss is for.

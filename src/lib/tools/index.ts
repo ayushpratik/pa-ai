@@ -22,18 +22,91 @@ import {
   findActiveApprovedPlan,
   setPlanStatusAsModel,
 } from "@/lib/plans";
+import { loadMessages } from "@/lib/conversations";
 import { apolloEnrich, apolloSearchPeople } from "@/lib/tools/apollo";
 import { fetchPageText, webSearch } from "@/lib/tools/search";
 
-// Batch caps. A single approved run must not be able to exhaust an API quota or
-// run past the route's maxDuration.
-const DEFAULT_LIMIT = 10;
-const MAX_LIMIT = 25;
+// Result counts for finding and listing records. The user picks how many they
+// want (the prompt offers 20, 30, ... 100); MAX_RESULTS is the hard ceiling.
+const DEFAULT_RESULTS = 20;
+const MAX_RESULTS = 100;
 
-function clamp(limit: number | undefined): number {
-  if (!limit || limit < 1) return DEFAULT_LIMIT;
-  return Math.min(limit, MAX_LIMIT);
+// Batch cap for actions that spend credits or contact a person. Kept lower than
+// MAX_RESULTS so one approved call cannot burn 100 Apollo credits or send 100
+// emails, and stays inside the route's maxDuration.
+const MAX_ACTION_BATCH = 25;
+
+function resultCount(limit: number | undefined): number {
+  if (!limit || limit < 1) return DEFAULT_RESULTS;
+  return Math.min(Math.floor(limit), MAX_RESULTS);
 }
+
+const resultCountSchema = z
+  .number()
+  .optional()
+  .describe(
+    `How many results the user asked for (they choose 20, 30, ... ${MAX_RESULTS}). Defaults to ${DEFAULT_RESULTS}, capped at ${MAX_RESULTS}.`,
+  );
+
+// Tools whose presence in a plan means the plan finds records, and therefore
+// needs a result count the user chose.
+const RECORD_FINDING_TOOLS = new Set([
+  "searchWeb",
+  "searchApollo",
+  "extractEntities",
+  "saveEntities",
+]);
+
+const FINDING_WORDS = /\b(find|search|research|list|identify|look up|source|discover)\b/i;
+
+const NUMBER_WORDS: Record<string, number> = {
+  ten: 10,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+  hundred: 100,
+};
+
+/**
+ * The result-count gate. The plan may only carry a count the user actually
+ * typed in this conversation (as digits or a word such as "thirty"), or 20 when
+ * they replied "default". Enforced here rather than in the prompt, because the
+ * model otherwise skips the question and plans with the default.
+ */
+async function userStatedCount(
+  userId: string,
+  conversationId: string,
+  count: number,
+): Promise<boolean> {
+  const history = await loadMessages(userId, conversationId);
+  for (const message of history) {
+    if (message.role !== "user") continue;
+    const text = message.parts
+      .map((part) => (part.type === "text" ? part.text : ""))
+      .join(" ")
+      .toLowerCase();
+
+    const digits = text.match(/\d+/g) ?? [];
+    if (digits.some((d) => Number(d) === count)) return true;
+
+    const words: string[] = text.match(/[a-z]+/g) ?? [];
+    if (words.some((w) => NUMBER_WORDS[w] === count)) return true;
+
+    if (count === DEFAULT_RESULTS && words.includes("default")) return true;
+  }
+  return false;
+}
+
+const askForCount = {
+  blocked: true as const,
+  reason: "result-count" as const,
+  error: `The user has not told you how many results they want. Do not propose a plan yet. Reply with only this question and wait for their answer: "Before we proceed, how many results do you want: 20, 30, 40, 50, 60, 70, 80, 90 or 100? (default 20)"`,
+};
 
 /**
  * The approval gate. Returned as a normal tool result rather than thrown, so the
@@ -95,9 +168,34 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
           )
           .min(1)
           .max(8),
+        resultCount: z
+          .number()
+          .nullable()
+          .describe(
+            `How many results the user told you they want (20 to ${MAX_RESULTS}). It must be a number the user actually replied with; if they have not said, do not call this tool, ask them first. Null only when the plan finds no people or records.`,
+          ),
       }),
-      async execute({ goal, steps }) {
-        return await createPlan(userId, conversationId, goal, steps);
+      async execute({ goal, steps, resultCount }) {
+        // Step text is checked too, because `tool` is optional and a plan that
+        // omitted it would otherwise skip the count.
+        const findsRecords = steps.some(
+          (step) =>
+            (step.tool && RECORD_FINDING_TOOLS.has(step.tool)) ||
+            FINDING_WORDS.test(`${step.title} ${step.detail ?? ""}`),
+        );
+
+        let count: number | null = null;
+        if (resultCount !== null || findsRecords) {
+          if (resultCount === null || resultCount < 1) return askForCount;
+          count = Math.min(Math.floor(resultCount), MAX_RESULTS);
+          if (!(await userStatedCount(userId, conversationId, Math.floor(resultCount)))) {
+            return askForCount;
+          }
+        }
+
+        const plan = await createPlan(userId, conversationId, goal, steps);
+        // Returned with the plan (not stored) so the card shows what is approved.
+        return { ...plan, resultCount: count };
       },
     }),
 
@@ -118,11 +216,11 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
         "Search the public web. Use this for anything a structured B2B database cannot answer: investment theses, cheque sizes, recent news, niche communities, or any non-business domain.",
       inputSchema: z.object({
         query: z.string(),
-        limit: z.number().optional().describe("Results to return, max 25."),
+        limit: resultCountSchema,
       }),
       async execute({ query, limit }) {
         try {
-          return { results: await webSearch(query, clamp(limit)) };
+          return { results: await webSearch(query, resultCount(limit)) };
         } catch (error) {
           return {
             error: error instanceof Error ? error.message : "Search failed.",
@@ -159,7 +257,7 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
             "What to extract and which criteria matter, e.g. 'VC funds investing in EV, with cheque size and partner names'.",
           ),
         sourceUrl: z.string().optional(),
-        limit: z.number().optional(),
+        limit: resultCountSchema,
       }),
       async execute({ text, lookingFor, sourceUrl, limit }) {
         try {
@@ -168,12 +266,12 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
             schema: z.object({ entities: z.array(entitySchema) }),
             system:
               "Extract only what the text actually supports. Never invent an email address, a phone number, or a figure. Omit a field rather than guessing it.",
-            prompt: `Extract up to ${clamp(limit)} records.\n\nLooking for: ${lookingFor}\n\nText:\n${text.slice(0, 12_000)}`,
+            prompt: `Extract up to ${resultCount(limit)} records.\n\nLooking for: ${lookingFor}\n\nText:\n${text.slice(0, 12_000)}`,
           });
 
           return {
             entities: object.entities
-              .slice(0, clamp(limit))
+              .slice(0, resultCount(limit))
               .map((entity) => ({ ...entity, sourceUrl: sourceUrl ?? null })),
           };
         } catch (error) {
@@ -202,10 +300,10 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
         "Look up people or organisations already saved from earlier runs, so work is not repeated.",
       inputSchema: z.object({
         type: z.string().optional().describe("Filter by record type."),
-        limit: z.number().optional(),
+        limit: resultCountSchema,
       }),
       async execute({ type, limit }) {
-        const found = await listEntities(userId, { type, limit: clamp(limit) });
+        const found = await listEntities(userId, { type, limit: resultCount(limit) });
         return { entities: found, count: found.length };
       },
     }),
@@ -236,7 +334,7 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
         const byId = new Map(entities.map((entity) => [entity.id, entity]));
 
         const created = [];
-        for (const draft of drafts.slice(0, MAX_LIMIT)) {
+        for (const draft of drafts.slice(0, MAX_ACTION_BATCH)) {
           const entity = byId.get(draft.entityId);
           if (!entity) continue;
 
@@ -279,7 +377,7 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
         if (gate.blocked) return gate;
 
         const results = [];
-        for (const id of outreachIds.slice(0, MAX_LIMIT)) {
+        for (const id of outreachIds.slice(0, MAX_ACTION_BATCH)) {
           const record = await getDraft(userId, id);
           if (!record) {
             results.push({ id, sent: false, note: "No such draft." });
@@ -367,13 +465,13 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
           .describe('Cities or countries, e.g. ["Bangalore, India"].'),
         organizationNames: z.array(z.string()).optional(),
         keywords: z.string().optional(),
-        limit: z.number().optional(),
+        limit: resultCountSchema,
       }),
       async execute(input) {
         try {
           const people = await apolloSearchPeople({
             ...input,
-            limit: clamp(input.limit),
+            limit: resultCount(input.limit),
           });
           return { entities: people, count: people.length };
         } catch (error) {
@@ -393,7 +491,7 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
         const gate = await requireApproval(userId, conversationId);
         if (gate.blocked) return gate;
 
-        const entities = await getEntities(userId, entityIds.slice(0, MAX_LIMIT));
+        const entities = await getEntities(userId, entityIds.slice(0, MAX_ACTION_BATCH));
         const enriched = [];
 
         for (const entity of entities) {

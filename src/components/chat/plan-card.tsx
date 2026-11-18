@@ -58,6 +58,11 @@ export function PlanCard({
             Plan
           </p>
           <p className="mt-1 font-medium">{plan.goal}</p>
+          {plan.resultCount != null && (
+            <p className="text-muted-foreground mt-1 text-xs">
+              Results: {plan.resultCount}
+            </p>
+          )}
         </div>
         <Badge variant={isOpen ? "default" : "secondary"} className="shrink-0">
           {STATUS_LABEL[status]}

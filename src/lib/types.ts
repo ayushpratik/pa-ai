@@ -35,6 +35,8 @@ export type PlanSummary = {
   steps: PlanStep[];
   status: PlanStatus;
   createdAt: string;
+  /** How many results the user chose. Present only on the proposePlan result. */
+  resultCount?: number | null;
 };
 
 export type MemoryCategory =

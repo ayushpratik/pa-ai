@@ -156,7 +156,11 @@ export function ToolPart({
     return (
       <CompactRow
         name={name}
-        detail="waiting for an approved plan"
+        detail={
+          output.reason === "result-count"
+            ? "waiting for how many results you want"
+            : "waiting for an approved plan"
+        }
         running={false}
         failed={false}
       />
