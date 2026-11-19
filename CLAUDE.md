@@ -165,6 +165,12 @@ drizzle/                           generated migrations
 
 ### Conventions and decisions
 
+- **Clickable elements use the pointer cursor, globally.** A rule in the `@layer base` of
+  `app/globals.css` sets `cursor: pointer` on buttons, links, roles (tab, menuitem, option,
+  checkbox, switch, radio), summary, select, labels with `for`, and checkbox/radio/file inputs,
+  and `not-allowed` on disabled ones. Tailwind v4 preflight resets buttons to `default`, which
+  is why this is needed. Do not add per-component `cursor-pointer`; a clickable `div` should
+  use `role="button"` so it is covered.
 - **Model id is config, not code.** Gemini model ids change between releases. Always confirm
   with `npm run check:model` rather than assuming an id is valid.
 - **`messages.id` is `text`, not `uuid`.** The AI SDK client generates nanoid-style message
