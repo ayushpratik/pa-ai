@@ -29,10 +29,16 @@ migration.
 - **Step 3 (done)** — accounts: email/password and Google sign-in, database-backed
   sessions, and a profile gate a new account must pass before it can use the assistant.
 
-**The assistant is deliberately domain-agnostic.** Sales outreach is the first use case,
-not the only one — the same user may ask it to find suppliers, hire, or research something
-personal. Nothing sales-specific is hard-coded in the schema or the base prompt; the domain
-lives in the user's profile and in learned memories. Keep it that way when extending it.
+**The assistant is strictly scoped to lead finding.** It only handles finding leads,
+enriching contacts, drafting/sending outreach, managing found leads, and related
+profile/preferences; everything else gets the fixed `OFF_TOPIC_REPLY`. Enforced twice:
+the `## Scope` section of the base prompt, and `isInScope()` in `lib/scope.ts`, a
+`generateObject` classifier run in `api/chat/route.ts` before the main model (the refusal is
+persisted and streamed without tools or memory extraction). The classifier sees the last 5
+messages so short answers ("30", "Approved...") pass, **fails closed** on error (the message is
+refused), and costs one small model call per user message. The schema and lead
+type stay generic (prospects, investors, suppliers); the domain lives in the profile and
+learned memories.
 
 ### Stack
 
@@ -138,6 +144,7 @@ src/
   lib/env.ts                       validated env access, CURRENT_USER_ID, SEND_EMAIL
   lib/model.ts                     lazily constructed Gemini provider
   lib/prompts.ts                   composed orchestrator prompt
+  lib/scope.ts                     off-topic classifier + fixed refusal reply
   lib/conversations.ts             conversation/message data access
   lib/profile.ts                   profile read/write + prompt block
   lib/memory.ts                    memory CRUD, dedupe, automatic extraction

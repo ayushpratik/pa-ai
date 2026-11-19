@@ -1,5 +1,7 @@
 import {
   convertToModelMessages,
+  createUIMessageStream,
+  createUIMessageStreamResponse,
   generateId,
   stepCountIs,
   streamText,
@@ -8,6 +10,7 @@ import {
 import { chatModel } from "@/lib/model";
 import { buildSystemPrompt } from "@/lib/prompts";
 import { buildTools } from "@/lib/tools";
+import { isInScope, OFF_TOPIC_REPLY } from "@/lib/scope";
 import { extractMemories } from "@/lib/memory";
 import { ensureConversation, saveMessage } from "@/lib/conversations";
 import { requireUserId } from "@/lib/session";
@@ -88,6 +91,33 @@ export async function POST(req: Request) {
       { error: error instanceof Error ? error.message : "Model not configured" },
       { status: 500 },
     );
+  }
+
+  // Strict topic gate: anything outside lead finding gets a fixed reply and
+  // never reaches the main model or its tools.
+  if (!(await isInScope(messages))) {
+    const refusal: UIMessage = {
+      id: generateId(),
+      role: "assistant",
+      parts: [{ type: "text", text: OFF_TOPIC_REPLY }],
+    };
+    try {
+      await saveMessage(id, refusal);
+    } catch (error) {
+      console.error("Failed to persist refusal", error);
+    }
+    const textId = generateId();
+    return createUIMessageStreamResponse({
+      stream: createUIMessageStream({
+        execute({ writer }) {
+          writer.write({ type: "start", messageId: refusal.id });
+          writer.write({ type: "text-start", id: textId });
+          writer.write({ type: "text-delta", id: textId, delta: OFF_TOPIC_REPLY });
+          writer.write({ type: "text-end", id: textId });
+          writer.write({ type: "finish" });
+        },
+      }),
+    });
   }
 
   const result = streamText({
