@@ -1,4 +1,4 @@
-import { getPlan, setPlanStatus } from "@/lib/plans";
+import { getPlan, resolveProposedPlan } from "@/lib/plans";
 import { withUser } from "@/lib/session";
 import type { PlanStatus } from "@/lib/types";
 
@@ -37,8 +37,18 @@ export const PATCH = withUser(
       );
     }
 
-    const plan = await setPlanStatus(userId, id, body.status as PlanStatus);
-    if (!plan) return Response.json({ error: "Not found" }, { status: 404 });
-    return Response.json(plan);
+    const result = await resolveProposedPlan(
+      userId,
+      id,
+      body.status as "approved" | "cancelled",
+    );
+    if (!result) return Response.json({ error: "Not found" }, { status: 404 });
+    if ("already" in result) {
+      return Response.json(
+        { error: "This plan was already acted on.", plan: result.already },
+        { status: 409 },
+      );
+    }
+    return Response.json(result.plan);
   },
 );

@@ -48,6 +48,39 @@ export async function setPlanStatus(
 }
 
 /**
+ * The user's Approve / Cancel click. Only a plan still "proposed" can be acted
+ * on, and the check is part of the UPDATE itself so two quick clicks (or two
+ * tabs) cannot both win. Returns null when the plan is missing, or `already`
+ * when it was no longer proposed, so the caller does not resume the run twice.
+ */
+export async function resolveProposedPlan(
+  userId: string,
+  id: string,
+  status: "approved" | "cancelled",
+): Promise<
+  { plan: PlanSummary } | { already: PlanSummary } | null
+> {
+  const [row] = await db
+    .update(plans)
+    .set({
+      status,
+      ...(status === "approved" ? { approvedAt: new Date() } : {}),
+    })
+    .where(
+      and(
+        eq(plans.id, id),
+        eq(plans.userId, userId),
+        eq(plans.status, "proposed"),
+      ),
+    )
+    .returning();
+  if (row) return { plan: toSummary(row) };
+
+  const current = await getPlan(userId, id);
+  return current ? { already: current } : null;
+}
+
+/**
  * The transition the model is allowed to make.
  *
  * "running" is treated as an active, approved state by `findActiveApprovedPlan`,

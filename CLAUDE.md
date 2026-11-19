@@ -285,6 +285,20 @@ message ("find 30 ...") passes straight through. The count is returned with the
 as "Results: N". It is not yet enforced on the search tools' own `limit`; storing it on
 the plan row would allow that.
 
+**The plan card's buttons follow the database, not the frozen tool result.** The
+`proposePlan` output in message history always says `proposed`, and the card's local
+state is lost whenever it remounts (reload, reopened thread), which made "Approve and
+run" / "Cancel" reappear after use. `PlanCard` now fetches `GET /api/plans/[id]` on
+mount and hides the buttons until that answers; once approved or cancelled they stay
+gone.
+
+**An approval can be acted on once.** A thread showed every result twice because
+"Approved. Go ahead and run the plan." was sent twice (the card's buttons reappeared and
+were clicked again), so the model ran the whole plan twice. `PATCH /api/plans/[id]` now
+goes through `resolveProposedPlan`, whose UPDATE is conditional on `status = 'proposed'`;
+a repeat returns 409 and the card syncs without resuming the model. The card also holds a
+ref lock against double clicks.
+
 **Adding a tool**: define it in `lib/tools/index.ts` with a `zod` `inputSchema`, pass a
 result count through `resultCount()` (default 20, max 100) or, for anything that costs money
 or contacts someone, cap the batch at `MAX_ACTION_BATCH` (25); call `requireApproval()` first if it

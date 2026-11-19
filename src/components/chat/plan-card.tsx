@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, CircleDollarSign, Loader2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,8 +29,37 @@ export function PlanCard({
   // live status locally after the user acts on it.
   const [status, setStatus] = useState<PlanStatus>(plan.status);
   const [pending, setPending] = useState<PlanStatus | null>(null);
+  // The frozen tool result always says "proposed", so on mount the card asks
+  // the server for the real status. Until that answers, the buttons stay hidden
+  // rather than flashing for a plan that was already approved or cancelled.
+  const [synced, setSynced] = useState(plan.status !== "proposed");
+
+  useEffect(() => {
+    if (plan.status !== "proposed") return;
+    let cancelled = false;
+    fetch(`/api/plans/${plan.id}`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((live: { status?: PlanStatus } | null) => {
+        if (cancelled) return;
+        // Never move a locally acted-on card back to "proposed".
+        if (live?.status) setStatus((prev) => (prev === "proposed" ? live.status! : prev));
+        setSynced(true);
+      })
+      .catch(() => {
+        if (!cancelled) setSynced(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plan.id, plan.status]);
+
+  // Synchronous lock: state updates are async, so a fast double click could
+  // otherwise fire two approvals and run the plan twice.
+  const acting = useRef(false);
 
   async function transition(next: "approved" | "cancelled") {
+    if (acting.current) return;
+    acting.current = true;
     setPending(next);
     try {
       const res = await fetch(`/api/plans/${plan.id}`, {
@@ -38,7 +67,18 @@ export function PlanCard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status: next }),
       });
-      if (!res.ok) return;
+      if (res.status === 409) {
+        // Already approved or cancelled elsewhere: sync the card, do not resume.
+        const body = (await res.json().catch(() => null)) as {
+          plan?: { status?: PlanStatus };
+        } | null;
+        if (body?.plan?.status) setStatus(body.plan.status);
+        return;
+      }
+      if (!res.ok) {
+        acting.current = false;
+        return;
+      }
 
       setStatus(next);
       if (next === "approved") onApproved();
@@ -49,6 +89,7 @@ export function PlanCard({
   }
 
   const isOpen = status === "proposed";
+  const showActions = isOpen && synced;
 
   return (
     <div className="bg-card w-full rounded-xl border p-4 text-sm shadow-sm">
@@ -100,7 +141,7 @@ export function PlanCard({
         ))}
       </ol>
 
-      {isOpen && (
+      {showActions && (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Button
             size="sm"
