@@ -399,7 +399,11 @@ posted id from appending to another account's thread.
 - As of 2026-11-18, `npm audit` also reports many advisories outside this list, including a
   **critical** one on `next` 16.3.0 and high ones on `nodemailer` and `undici`. Upgrade `next`
   first.
-- Assistant messages render as plain text. Markdown rendering is not implemented.
+- Assistant messages render as plain text. Markdown rendering is not implemented. Because
+  of that, the base prompt forbids the model from restating found records as a markdown
+  table or list after `saveEntities`/`listEntities`/`enrichContact`: the result table card
+  is the only place records appear (previously the model echoed them as raw `| **Name** |`
+  pipe text under the card). This is a prompt rule only, not enforced server-side.
 - Conversation titles are truncated from the first user message, not model-generated.
 - Hosting target is a single Linux server: the repo in `/var/www/pa.kishul.com`, built and
   run rootless with **Podman** on `127.0.0.1:3001`, nginx terminating TLS for
