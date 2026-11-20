@@ -272,7 +272,7 @@ exactly how a test-mode send reaches a real prospect.
 Every attempt writes an `outreach` row recording the mode and transport used, which is also
 what powers "has this person already been contacted?" across conversations.
 
-**Result counts are the user's choice, up to 100.** When a request is about finding records
+**Result counts are the user's choice, up to 100.** Any number from 1 to 100 is valid; 20, 30 ... 100 are only suggestions in the question. A number already in the user's message ("15 supermarkets in germany") is used as-is with no question, and is never rounded to a suggested value. The prompt and `askForCount` wording were fixed after the model asked the 20-100 question despite an explicit 15. When a request is about finding records
 and no number was given, the prompt tells the model to ask in its clarifying message: "20,
 30, 40 ... 100? (default 20)". The answer becomes the `limit` on `searchWeb`,
 `extractEntities`, `listEntities` and `searchApollo`, all of which pass it through
@@ -406,6 +406,16 @@ through `conversations` (messages carry no `user_id`, so a guessed UUID used to 
 and `ensureConversation` returns false when the posted id belongs to someone else, which the
 chat route turns into a 404 — the client mints conversation ids, so nothing else stops a
 posted id from appending to another account's thread.
+
+### Cost model
+
+`COST_ESTIMATE.md` holds the per-thread, per-user and monthly cost estimate for the client's
+pricing model (modeled, not measured; vendor prices are third-party figures to re-verify).
+Headline: Gemini + Serper cost cents per thread (about $0.10-0.60); Apollo email reveals are
+85-95% of cost when enrichment is used. A typical user (20 threads/month, 10 enrichments each)
+is roughly $20-55/month, a heavy one $130-410. Pricing should meter Apollo reveals as a credit
+bucket. Usage is not yet logged; recording `result.usage` from `streamText`/`generateObject`
+plus Serper calls and Apollo reveals per conversation would turn the estimate into measured data.
 
 ### Known follow-ups
 

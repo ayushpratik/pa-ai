@@ -27,7 +27,7 @@ import { apolloEnrich, apolloSearchPeople } from "@/lib/tools/apollo";
 import { fetchPageText, webSearch } from "@/lib/tools/search";
 
 // Result counts for finding and listing records. The user picks how many they
-// want (the prompt offers 20, 30, ... 100); MAX_RESULTS is the hard ceiling.
+// want (the prompt suggests 20, 30, ... 100 but any 1-100 is valid); MAX_RESULTS is the hard ceiling.
 const DEFAULT_RESULTS = 20;
 const MAX_RESULTS = 100;
 
@@ -45,7 +45,7 @@ const resultCountSchema = z
   .number()
   .optional()
   .describe(
-    `How many results the user asked for (they choose 20, 30, ... ${MAX_RESULTS}). Defaults to ${DEFAULT_RESULTS}, capped at ${MAX_RESULTS}.`,
+    `How many results the user asked for (any number from 1 to ${MAX_RESULTS}). Defaults to ${DEFAULT_RESULTS}, capped at ${MAX_RESULTS}.`,
   );
 
 // Tools whose presence in a plan means the plan finds records, and therefore
@@ -105,7 +105,7 @@ async function userStatedCount(
 const askForCount = {
   blocked: true as const,
   reason: "result-count" as const,
-  error: `The user has not told you how many results they want. Do not propose a plan yet. Reply with only this question and wait for their answer: "Before we proceed, how many results do you want: 20, 30, 40, 50, 60, 70, 80, 90 or 100? (default 20)"`,
+  error: `The user has not told you how many results they want. Do not propose a plan yet. Reply with only this question and wait for their answer: "Before we proceed, how many results do you want? Any number up to 100, for example 20, 30 or 50 (default 20)"`,
 };
 
 /**
@@ -172,7 +172,7 @@ export function buildTools(conversationId: string, userId: string): ToolSet {
           .number()
           .nullable()
           .describe(
-            `How many results the user told you they want (20 to ${MAX_RESULTS}). It must be a number the user actually replied with; if they have not said, do not call this tool, ask them first. Null only when the plan finds no people or records.`,
+            `How many results the user told you they want (any number from 1 to ${MAX_RESULTS}, such as 15). It must be a number the user actually typed; if they have not said, do not call this tool, ask them first. Null only when the plan finds no people or records.`,
           ),
       }),
       async execute({ goal, steps, resultCount }) {
