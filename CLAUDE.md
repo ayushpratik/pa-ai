@@ -353,6 +353,18 @@ history, so there is no export endpoint and no extra query.
   download is always every record in one file. Attribute columns are derived from the
   full set rather than the visible page, so they do not shift while paging.
 
+### Contact icons in the result table
+
+The Contact column shows icon buttons that open the channel directly: a mail icon
+(`mailto:`) and a green WhatsApp icon (`https://wa.me/<digits>`), plus the LinkedIn link.
+There is no phone column in the schema; the number lives in `attributes` under `phone`
+(also `mobile`, `whatsapp`, `phoneNumber`, `contactNumber`, matched case-insensitively) by
+`findPhone()` in `prospect-table.tsx`. The `entitySchema` description tells the model to
+use the `phone` key in international format. Phone keys are hidden from the attribute
+columns so the number is not shown twice. WhatsApp needs the country code: a number
+without one will open the wrong chat. Phones are only present when the source page or
+Apollo supplied one; the model is told never to invent them.
+
 ### Authentication and the profile gate (step 3)
 
 **Hand-rolled, no auth library.** Everything needed was already present: Node's `crypto`

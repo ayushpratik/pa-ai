@@ -138,7 +138,7 @@ const entitySchema = z.object({
   attributes: z
     .record(z.string(), z.unknown())
     .describe(
-      "Every other useful detail as key/value pairs. Use whatever keys fit the domain; there is no fixed set.",
+      "Every other useful detail as key/value pairs. Use whatever keys fit the domain; there is no fixed set. Put a phone or mobile number under the key \"phone\", in international format with country code when the source gives it, so the result table can offer a WhatsApp link.",
     ),
 });
 

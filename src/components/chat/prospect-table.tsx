@@ -10,12 +10,48 @@ import {
   Link2,
   Loader2,
   Mail,
+  MessageCircle,
 } from "lucide-react";
 import { useConversationEntities } from "@/components/chat/conversation-entities";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { downloadEntities, type ExportFormat } from "@/lib/export";
 import type { EntitySummary } from "@/lib/types";
+
+const PHONE_KEYS = ["phone", "mobile", "whatsapp", "phoneNumber", "phone_number", "contactNumber"];
+
+/** Finds a phone number in the open attributes bag, if the record has one. */
+function findPhone(entity: EntitySummary): string | null {
+  const attrs = entity.attributes ?? {};
+  for (const key of Object.keys(attrs)) {
+    if (!PHONE_KEYS.some((k) => k.toLowerCase() === key.toLowerCase())) continue;
+    const raw = formatValue(attrs[key]);
+    if (raw.replace(/\D/g, "").length >= 7) return raw;
+  }
+  return null;
+}
+
+const EMAIL_RE = /[^\s<>,;()]+@[^\s<>,;()]+\.[^\s<>,;()]+/;
+
+function isEmailKey(key: string): boolean {
+  return key.toLowerCase().includes("email");
+}
+
+/** The email column, or an email the model put in the attributes bag instead. */
+function findEmail(entity: EntitySummary): string | null {
+  if (entity.email) return entity.email;
+  for (const [key, value] of Object.entries(entity.attributes ?? {})) {
+    if (!isEmailKey(key)) continue;
+    const match = formatValue(value).match(EMAIL_RE);
+    if (match) return match[0];
+  }
+  return null;
+}
+
+/** wa.me wants digits only, with the country code and no leading zeros. */
+function whatsappUrl(phone: string): string {
+  return `https://wa.me/${phone.replace(/\D/g, "").replace(/^0+/, "")}`;
+}
 
 /**
  * Picks the most informative attribute keys across the result set. The entity
@@ -27,6 +63,8 @@ function deriveColumns(entities: EntitySummary[], max = 3): string[] {
   for (const entity of entities) {
     for (const [key, value] of Object.entries(entity.attributes ?? {})) {
       if (value === null || value === undefined || value === "") continue;
+      if (PHONE_KEYS.some((k) => k.toLowerCase() === key.toLowerCase())) continue;
+      if (isEmailKey(key)) continue;
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
   }
@@ -154,7 +192,10 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
             </tr>
           </thead>
           <tbody>
-            {visible.map((entity) => (
+            {visible.map((entity) => {
+              const phone = findPhone(entity);
+              const email = findEmail(entity);
+              return (
               <tr key={entity.id} className="border-t align-top">
                 <td className="px-4 py-2.5">
                   <span className="font-medium">{entity.name}</span>
@@ -187,15 +228,28 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
                   </td>
                 ))}
                 <td className="px-4 py-2.5">
-                  <div className="flex items-center gap-2">
-                    {entity.email ? (
-                      <span
-                        className="inline-flex items-center gap-1 text-xs"
-                        title={entity.email}
+                  <div className="flex flex-col items-start gap-1.5">
+                    {email ? (
+                      <a
+                        href={`mailto:${email}`}
+                        className="hover:bg-muted inline-flex max-w-[16rem] items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+                        title={`Email ${email}`}
                       >
-                        <Mail className="size-3.5" />
-                        email
-                      </span>
+                        <Mail className="size-3.5 shrink-0" />
+                        <span className="truncate">{email}</span>
+                      </a>
+                    ) : null}
+                    {phone ? (
+                      <a
+                        href={whatsappUrl(phone)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="hover:bg-muted inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
+                        title={`WhatsApp ${phone}`}
+                      >
+                        <MessageCircle className="size-3.5 shrink-0 text-green-600" />
+                        <span>{phone}</span>
+                      </a>
                     ) : null}
                     {entity.linkedinUrl ? (
                       <a
@@ -208,13 +262,14 @@ export function ProspectTable({ entities }: { entities: EntitySummary[] }) {
                         profile
                       </a>
                     ) : null}
-                    {!entity.email && !entity.linkedinUrl && (
+                    {!email && !phone && !entity.linkedinUrl && (
                       <span className="text-muted-foreground text-xs">none</span>
                     )}
                   </div>
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
