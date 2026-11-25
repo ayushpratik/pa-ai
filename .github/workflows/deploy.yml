@@ -1,0 +1,47 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload source
+        run: |
+          rsync -az --delete \
+            --exclude node_modules --exclude .next --exclude .git \
+            --exclude '.env*' --exclude env.txt --exclude .DS_Store \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:~/sales-ai/src-build/
+
+      - name: Build, migrate, restart
+        run: |
+          ssh ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} 'bash -se' <<'EOF'
+          set -euo pipefail
+          cd ~/sales-ai/src-build
+          podman build --target runner   -t localhost/sales-ai:latest .
+          podman build --target migrator -t localhost/sales-ai-migrate:latest .
+          podman run --rm --pod sales-ai --env-file ~/sales-ai/.env localhost/sales-ai-migrate:latest
+          podman rm -f sales-ai-app
+          podman run -d --name sales-ai-app --pod sales-ai \
+            --restart=always --env-file ~/sales-ai/.env \
+            localhost/sales-ai:latest
+          podman image prune -f
+          sleep 5
+          podman logs --tail 20 sales-ai-app
+          EOF
